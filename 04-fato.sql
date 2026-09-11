@@ -5,6 +5,9 @@
 -- Rode depois de: 03-dimensoes.sql
 -- =====================================================================================
 
+-- Garante que a extensão de desacentuação nativa do PostgreSQL esteja habilitada
+CREATE EXTENSION IF NOT EXISTS unaccent;
+
 INSERT INTO fato_pedido (
     numero_pedido,
     sk_tempo_pedido,
@@ -29,17 +32,17 @@ SELECT
     -- 1. FK Tempo Pedido: Converte MM/DD/YYYY HH12:MI AM para o número inteiro AAAAMMDD
     TO_CHAR(TO_TIMESTAMP(stpe."DtHoraPedido", 'MM/DD/YYYY HH12:MI AM'), 'YYYYMMDD')::INT AS sk_tempo_pedido,
     
-    -- 2. FK Tempo Entrega: Se a entrega não ocorreu, aponta para a linha -1 (Role-playing dimension)
+    -- 2. FK Tempo Entrega: Se a entrega não ocorreu, aponta para a linha -1 
     COALESCE(
         CASE WHEN stpe."DtEntregaCliente" IS NOT NULL AND TRIM(stpe."DtEntregaCliente") <> ''
              THEN TO_CHAR(stpe."DtEntregaCliente"::DATE, 'YYYYMMDD')::INT
         END, -1
     ) AS sk_tempo_entrega,
     
-    -- 3. FK Loja: Lookup após padronização do nome. Se não encontrar (3 pedidos sem loja), aponta para -1
+    -- 3. FK Loja: Lookup após padronização e desacentuação completa. Aponta para -1 para os 3 pedidos sem loja
     COALESCE(dmlo.sk_loja, -1) AS sk_loja,
     
-    -- 4. FK Categoria: Lookup direto pela grafia crua da origem (categoria_origem)
+    -- 4. FK Categoria: Lookup direto com TRIM pela grafia da origem (categoria_origem)
     COALESCE(dmca.sk_categoria, -1) AS sk_categoria,
     
     -- 5. Normalização da coluna HouveDesconto (17 variações agrupadas em 3 domínios)
@@ -49,20 +52,20 @@ SELECT
         ELSE 'Nao Informado'
     END AS houve_desconto,
     
-    -- 6. Normalização do Canal do Pedido (A ORDEM IMPORTA: WHATS testado antes de APP)
+    -- 6. Normalização do Canal do Pedido (WHATS testado antes de APP)
     CASE 
-        WHEN UPPER(TRANSLATE(stpe."CanalPedido", 'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÄËÏÖÜÇáéíóúàèìòùâêîôûãõäëïöüç', 'AEIOUAEIOUAEIOUAEIOUECaeiouaeiouaeiouaeiouec')) LIKE '%WHATS%' THEN 'WhatsApp'
-        WHEN UPPER(TRANSLATE(stpe."CanalPedido", 'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÄËÏÖÜÇáéíóúàèìòùâêîôûãõäëïöüç', 'AEIOUAEIOUAEIOUAEIOUECaeiouaeiouaeiouaeiouec')) LIKE '%APP%' THEN 'App'
-        WHEN UPPER(TRANSLATE(stpe."CanalPedido", 'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÄËÏÖÜÇáéíóúàèìòùâêîôûãõäëïöüç', 'AEIOUAEIOUAEIOUAEIOUECaeiouaeiouaeiouaeiouec')) LIKE '%SITE%' THEN 'Site'
-        WHEN UPPER(TRANSLATE(stpe."CanalPedido", 'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÄËÏÖÜÇáéíóúàèìòùâêîôûãõäëïöüç', 'AEIOUAEIOUAEIOUAEIOUECaeiouaeiouaeiouaeiouec')) LIKE '%LOJA%' THEN 'Loja Fisica'
-        WHEN UPPER(TRANSLATE(stpe."CanalPedido", 'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÄËÏÖÜÇáéíóúàèìòùâêîôûãõäëïöüç', 'AEIOUAEIOUAEIOUAEIOUECaeiouaeiouaeiouaeiouec')) LIKE '%TEL%' THEN 'Telefone'
+        WHEN UPPER(UNACCENT(stpe."CanalPedido")) LIKE '%WHATS%' THEN 'WhatsApp'
+        WHEN UPPER(UNACCENT(stpe."CanalPedido")) LIKE '%APP%' THEN 'App'
+        WHEN UPPER(UNACCENT(stpe."CanalPedido")) LIKE '%SITE%' THEN 'Site'
+        WHEN UPPER(UNACCENT(stpe."CanalPedido")) LIKE '%LOJA%' THEN 'Loja Fisica'
+        WHEN UPPER(UNACCENT(stpe."CanalPedido")) LIKE '%TEL%' THEN 'Telefone'
         ELSE 'Nao Informado'
     END AS canal_pedido,
     
     -- Timestamp completo do pedido
     TO_TIMESTAMP(stpe."DtHoraPedido", 'MM/DD/YYYY HH12:MI AM') AS dt_pedido,
     
-    -- Tratamento da Quantidade de itens (trata '-', valores vazios e textos não numéricos)
+    -- Tratamento da Quantidade de itens
     CASE 
         WHEN TRIM(stpe."QTD.Itens") IN ('', '-', 'N/I', 'n/d') OR stpe."QTD.Itens" IS NULL THEN NULL
         ELSE CAST(TRIM(stpe."QTD.Itens") AS INTEGER)
@@ -76,7 +79,7 @@ SELECT
         ELSE CAST(REPLACE(REPLACE(stpe."ValorLiquidoPedido(R$)", 'R$', ''), ' ', '') AS DECIMAL(15,2))
     END AS vl_liquido,
     
-    -- 7. Prazos em Dias: Grave NULL se o marco final não aconteceu (Processo em aberto)
+    -- 7. Prazos em Dias: Gravar NULL se o marco final não aconteceu
     CASE WHEN stpe."Dt Separacao Estoque" IS NOT NULL AND TRIM(stpe."Dt Separacao Estoque") <> '' 
          THEN stpe."Dt Separacao Estoque"::DATE - TO_TIMESTAMP(stpe."DtHoraIntegracaoERP", 'MM/DD/YYYY HH12:MI AM')::DATE 
     END AS dias_integracao_separacao,
@@ -93,27 +96,30 @@ SELECT
          THEN stpe."DtEntregaCliente"::DATE - stpe."Dt_Despacho_Transportadora"::DATE 
     END AS dias_despacho_entrega,
 
-    -- Intervalo Total: Resposta principal da P1
+    -- Intervalo Total
     CASE WHEN stpe."DtEntregaCliente" IS NOT NULL AND TRIM(stpe."DtEntregaCliente") <> ''
          THEN stpe."DtEntregaCliente"::DATE - TO_TIMESTAMP(stpe."DtHoraIntegracaoERP", 'MM/DD/YYYY HH12:MI AM')::DATE 
     END AS dias_total_ate_entrega
 
 FROM stg_pedido stpe
 
--- Lookup de Categoria pela grafia crua
-LEFT JOIN dim_categoria dmca ON stpe."CategoriaProduto" = dmca.categoria_origem
+-- Lookup de Categoria com TRIM
+LEFT JOIN dim_categoria dmca ON TRIM(stpe."CategoriaProduto") = dmca.categoria_origem
 
--- Lookup de Loja padronizando o nome da origem antes da comparação com dim_loja.chave_loja
-LEFT JOIN dim_loja dmlo ON UPPER(TRANSLATE(
-    CASE 
-        WHEN UPPER(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' ')) LIKE '%BLUMENAL%' 
-            THEN 'PATA AMIGA BLUMENAU CENTRO'
-        WHEN UPPER(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' ')) LIKE '%FLORIPA%' 
-            THEN 'PATA AMIGA FLORIANOPOLIS NORTE'
-        WHEN UPPER(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' ')) LIKE '%JGUA DO SUL%' 
-            THEN 'PATA AMIGA JARAGUA DO SUL'
-        ELSE TRIM(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' '))
-    END, 
-    'ÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÄËÏÖÜÇáéíóúàèìòùâêîôûãõäëïöüç', 
-    'AEIOUAEIOUAEIOUAEIOUECaeiouaeiouaeiouaeiouec'
-)) = dmlo.chave_loja;
+-- Lookup de Loja imune a acentuação, caracteres especiais e caixa de texto
+LEFT JOIN dim_loja dmlo ON UPPER(
+    REGEXP_REPLACE(
+        UNACCENT(
+            CASE 
+                WHEN UPPER(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' ')) LIKE '%BLUMENAL%' 
+                    THEN 'PATA AMIGA BLUMENAU CENTRO'
+                WHEN UPPER(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' ')) LIKE '%FLORIPA%' 
+                    THEN 'PATA AMIGA FLORIANOPOLIS NORTE'
+                WHEN UPPER(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' ')) LIKE '%JGUA DO SUL%' 
+                    THEN 'PATA AMIGA JARAGUA DO SUL'
+                ELSE TRIM(REPLACE(REPLACE(stpe."Loja-Nome", '/SC', ''), '  ', ' '))
+            END
+        ),
+        '[^a-zA-Z0-9 ]', '', 'g'
+    )
+) = UPPER(REGEXP_REPLACE(UNACCENT(dmlo.chave_loja), '[^a-zA-Z0-9 ]', '', 'g'));
