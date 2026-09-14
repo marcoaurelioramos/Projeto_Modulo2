@@ -39,197 +39,149 @@ Para rodar o projeto e validar os resultados finais, siga a sequência exata de 
 Após a execução da carga da staging (`01-carga-staging.sql`), foi realizada uma análise detalhada dos dados brutos nas três tabelas recebidas (`stg_pedido`, `stg_loja`, `stg_loja_praca`). Identificaram-se os seguintes pontos de atenção e inconsistências:
 
 1. **Grafias e Identificação de Loja:**
-   * **Há 128 de variações de grafias** para nomes de lojas com inconsistências (ex: *PATA AMIGA BLUMENAL CENTRO*, *FLORIPA*, *JGUA DO SUL*, sufixos `/SC`).
-	SELECT DISTINCT("Loja-Nome") FROM STG_PEDIDO;
-
+   * **Há variações de grafias** para nomes de lojas com inconsistências (ex: *PATA AMIGA BLUMENAL CENTRO*, *FLORIPA*, *JGUA DO SUL*, sufixos `/SC`).
    * **1.575 pedidos** vieram com o campo `Cod Loja` em branco na tabela `stg_pedido`.
-	COUNT("Cod Loja") FROM stg_pedido WHERE "Cod Loja" IS NULL OR TRIM("Cod Loja") = '';
-
    * **3 pedidos** não possuem nenhuma identificação de loja (sem código e sem nome).
-	SELECT COUNT("Cod Loja")  FROM stg_pedido WHERE ("Cod Loja" IS NULL OR TRIM("Cod Loja") = '')   AND ("Loja-Nome" IS NULL OR TRIM("Loja-Nome") = '');
-
 
 2. **Grafias de Categoria:**
    * Foram encontradas **37 grafias distintas** para categorias de produtos na coluna `CategoriaProduto`, contendo erros de acentuação, maiúsculas/minúsculas e abreviações (ex: *Racao*, *RACAO*, *Rac.*, *Ração Medicamentosa*). 
 
-SELECT DISTINCT("CategoriaProduto") FROM STG_PEDIDO;
-
 3. **Grafias de Houve Desconto:**
-   * Na coluna `HouveDesconto` exitem **17 grafias distintas**, contendo, maiúsculas/minúsculas, abreviações e vazios (ex: *SITE*, *site*, *APP*, *tel.*). 
-
-SELECT DISTINCT("HouveDesconto") FROM STG_PEDIDO;
+   * Na coluna `HouveDesconto` existem **17 grafias distintas**, contendo maiúsculas/minúsculas, abreviações e vazios (ex: *SIM*, *sim*, *1*, *false*). 
 
 4. **Grafias de Canal Pedido:**
-   * A coluna `CanalPedido` tem **20 grafias distintas**, contendo, maiúsculas/minúsculas, numeros, abreviações e vazios (ex: *SIM*, *sim*, *1*, *false*). 
-
-SELECT DISTINCT("CanalPedido") FROM STG_PEDIDO;
+   * A coluna `CanalPedido` tem **20 grafias distintas**, contendo maiúsculas/minúsculas, números, abreviações e vazios (ex: *SITE*, *site*, *APP*, *tel.*). 
 
 5. **Marcos de Processo em Branco (Processos em Aberto):**
    * **1.077** pedidos sem data de separação (`Dt Separacao Estoque`).
-	SELECT COUNT("Dt Separacao Estoque") FROM STG_PEDIDO WHERE "Dt Separacao Estoque" IS NULL OR TRIM("Dt Separacao Estoque") = '';
-
    * **1.338** pedidos sem data de nota fiscal (`DtNotaFiscal`).
-	SELECT COUNT("DtNotaFiscal") FROM STG_PEDIDO WHERE "DtNotaFiscal" IS NULL OR TRIM("DtNotaFiscal") = '';
-
    * **1.665** pedidos sem data de despacho (`Dt_Despacho_Transportadora`).
-	SELECT COUNT("Dt_Despacho_Transportadora") FROM STG_PEDIDO WHERE "Dt_Despacho_Transportadora" IS NULL OR TRIM("Dt_Despacho_Transportadora") = '';
-	
    * **1.953** pedidos sem data de entrega (`DtEntregaCliente`), representando processos de entrega ainda não concluídos.
-	SELECT COUNT("DtEntregaCliente") FROM STG_PEDIDO WHERE "DtEntregaCliente" IS NULL OR TRIM("DtEntregaCliente") = '';
 
 
 
-## Tarefa 2 : Tratamento
+## Tarefa 2: Tratamento
 
-Os tratamentos foram implementados diretamente na carga do modelo dimensional, divididos entre os arquivos `03-dimensoes.sql` e `04-fato.sql`.
-
-# Mapeamento dos Tratamentos do Item 2 (Desafio) nos Scripts SQL
-
-Os tratamentos solicitados na **Seção 2 (DESAFIO)** e detalhados na **Seção 4 (REQUISITOS DAS TAREFAS)** do documento foram implementados diretamente durante a carga do modelo dimensional, divididos entre os arquivos `03-dimensoes.sql` e `04-fato.sql`.
+Os tratamentos foram implementados diretamente durante a carga do modelo dimensional, divididos entre os arquivos `03-dimensoes.sql` e `04-fato.sql`.
 
 ### 1. Para as Datas:
-
-* **Como foi feito:**
-  * Para a data do pedido (`DtHoraPedido` e `DtHoraIntegracaoERP`), usou-se:
-        TO_TIMESTAMP(sp."DtHoraPedido", 'MM/DD/YYYY HH12:MI AM')
-  
-  * Para a chave da dimensão de tempo (`sk_tempo_pedido`), foi extraído o inteiro no formato `AAAAMMDD`:
-        TO_CHAR(..., 'YYYYMMDD')::INT
-   
-  * Para os marcos de processo (*Separação, Nota Fiscal, Despacho e Entrega*), aplicou-se a conversão direta para data via 
-        `::DATE`.
-
+* Para a data do pedido (`DtHoraPedido` e `DtHoraIntegracaoERP`), usou-se: `TO_TIMESTAMP(sp."DtHoraPedido", 'MM/DD/YYYY HH12:MI AM')`.
+* Para a chave da dimensão de tempo (`sk_tempo_pedido`), extraiu-se o inteiro no formato `AAAAMMDD`: `TO_CHAR(..., 'YYYYMMDD')::INT`.
+* Para os marcos de processo (*Separação, Nota Fiscal, Despacho e Entrega*), aplicou-se a conversão direta para data via `::DATE`.
 
 ### 2. Limpeza e Conversão de Valores Financeiros e Quantidades
-* **Como foi feito:**
-  * **Valor em Reais (`vl_liquido`):** Foi aplicada a expressão `CASE WHEN` com `REPLACE` e `CAST` para remover `"R$"`, pontos de milhar, converter vírgulas em pontos e mapear campos vazios ou `"-"` para `NULL` :
-    CASE 
-        WHEN TRIM(REPLACE(sp."ValorLiquidoPedido(R$)", 'R$', '')) IN ('', '-') THEN NULL
-        WHEN sp."ValorLiquidoPedido(R$)" LIKE '%,%' 
-            THEN CAST(REPLACE(REPLACE(REPLACE(REPLACE(sp."ValorLiquidoPedido(R$)", 'R$', ''), ' ', ''), '.', ''), ',', '.') AS DECIMAL(15,2))
-        ELSE CAST(REPLACE(REPLACE(sp."ValorLiquidoPedido(R$)", 'R$', ''), ' ', '') AS DECIMAL(15,2))
-    END AS vl_liquido
-    
-    
-  * **Quantidade de Itens (`qt_itens`):** Convertida via `CAST(sp."QTD.Itens" AS INTEGER)`.
+* **Valor em Reais (`vl_liquido`):** Foi aplicada a expressão `CASE WHEN` com `REPLACE` e `CAST` para remover `"R$"`, pontos de milhar, converter vírgulas em pontos e mapear campos vazios ou `"-"` para `NULL`.
+* **Quantidade de Itens (`qt_itens`):** Convertida via `CAST(sp."QTD.Itens" AS INTEGER)`.
+
+### 3. Padronização das Grafias de Categoria
+* Foi aplicado um `CASE WHEN` sobre a coluna `CategoriaProduto`, usando `UPPER(UNACCENT(...))` para ignorar acentos e maiúsculas/minúsculas.
+* **Precedência lógica:** A regra do termo `'MED'` foi testada em 1º lugar para garantir que *"Ração Medicamentosa"* fosse classificada como **Medicamento** e não Ração.
+
+### 4. Padronização do Nome da Loja
+* Utilizou-se `CASE WHEN` combinado com `REPLACE` para tratar as exceções (`BLUMENAL`, `FLORIPA`, `JGUA DO SUL`) e limpeza de caracteres especiais (`REGEXP_REPLACE` + `UNACCENT`) para efetuar o join perfeito com `dim_loja`.
+
+### 5. Padronização de "Houve Desconto" e "Canal do Pedido"
+* **Houve Desconto:** Agrupou as variações nos domínios `'Sim'`, `'Nao'` ou `'Nao Informado'`.
+* **Canal do Pedido:** Mapeou as variantes testando `'WHATS'` antes de `'APP'` para evitar sobreposição.
+
+### 6. Tratamento de Marcos em Branco e Pedidos sem Loja
+* **Entregas não concluídas:** Atribuiu-se `sk_tempo_entrega = -1` e gravou-se `NULL` nos prazos em dias.
+* **Pedidos sem loja (3 pedidos):** Utilizou-se `COALESCE(dmlo.sk_loja, -1)` para vincular à linha `-1` (*"Nao Informado"*).
 
 
 
-### 3. Para Padronização das Grafias de Categoria (De-Para das 37 Grafias para 7 Oficiais)
-* **Como foi feito:**
-  * Foi aplicado um `CASE WHEN` sobre a coluna `CategoriaProduto`, usando `UPPER(TRANSLATE(...))` para ignorar acentos e maiúsculas/minúsculas.
-  * **Respeito à precedência lógica:** A regra do termo `'MED'` foi testada em **1º lugar** no `CASE` para garantir que *"Ração Medicamentosa"* fosse classificada corretamente como **Medicamento** e não como Ração.
-  * A grafia crua original foi guardada em `categoria_origem` para permitir o `JOIN` posterior com a fato.
+## Respostas às Perguntas de Negócio (P1 a P5)
 
-
-
-### 4. Para Padronização do Nome da Loja (Apelidos, Erros de Digitação e Abreviaturas)
-* **Como foi feito:**
-  * Foi utilizado um `CASE WHEN` manual combinado com `REPLACE` para corrigir as 3 exceções conhecidas antes do cruzamento com a `dim_loja`:
-    * `"BLUMENAL"` $\rightarrow$ `PATA AMIGA BLUMENAU CENTRO`
-    * `"FLORIPA"` $\rightarrow$ `PATA AMIGA FLORIANOPOLIS NORTE`
-    * `"JGUA DO SUL"` $\rightarrow$ `PATA AMIGA JARAGUA DO SUL`
-  * Removeu-se o sufixo `"/SC"` e aplicou-se `UPPER(TRANSLATE(...))` para comparar byte a byte com a coluna `chave_loja` da `dim_loja`.
-
-
-
-### 5. Para Padronização de "Houve Desconto" e "Canal do Pedido"
-* **Como foi feito:**
-  * **Houve Desconto:** Agrupou as 17 variações (`S`, `SIM`, `1`, `X`, `TRUE`, `V` / `N`, `NAO`, `0`, `FALSE`, `F`) nos domínios `'Sim'`, `'Nao'` ou `'Nao Informado'`.
-  * **Canal do Pedido:** Mapeou as variantes utilizando `CASE WHEN` e testando `'WHATS'` **antes** de `'APP'` para evitar que pedidos de WhatsApp fossem erroneamente atribuídos ao App.
-
-
-
-### 6. Para Tratamento de Marcos em Branco e Pedidos sem Loja (Processos em Aberto / Integridade Referencial)
-* **Como foi feito:**
-  * **Entregas não concluídas:** Atribuiu-se `sk_tempo_entrega = -1` (apontando para a linha `-1` de `dim_tempo`) e gravou-se `NULL` nas colunas de prazos em dias (garantindo que o `AVG` ignore processos não concluídos em vez de calcular com zero).
-  * **Pedidos sem loja identificada (3 pedidos):** Utilizou-se `COALESCE(dl.sk_loja, -1)` para vincular à linha `-1` (*"Nao Informado"*) de `dim_loja`, mantendo a integridade sem chaves estrangeiras nulas.
-
-
-  # Respostas às Perguntas de Negócio (P1 a P5)
-
-As análises abaixo foram consolidadas a partir da execução dos scripts SQL no modelo dimensional (`fato_pedido`, dimensões e tabela bridge), permitindo responder às perguntas estratégicas da diretoria da Pata Amiga.
+As análises abaixo foram consolidadas a partir da execução exata das consultas SQL oficiais no modelo dimensional (`05-perguntas.sql`).
 
 
 
 ### **P1: Onde está o gargalo da entrega?**
 
 * **Tempo Médio Total:** O tempo médio geral entre a entrada do pedido no ERP e a entrega ao cliente é de **9,00 dias**.
-* **O Gargalo:** O processo mais lento é a etapa de **Nota Fiscal -> Despacho**, que consome em média **4,11 dias** (representando **45,67%** de todo o tempo do ciclo).
+* **O Gargalo:** O processo mais lento é a etapa de **Nota Fiscal -> Despacho**, que consome em média **4,11 dias** (representando **45,64%** de todo o tempo do ciclo).
 * **Análise por Porte:**
-  * **Lojas Grandes:** Média total de **7,92 dias** (Nota -> Despacho: **3,30 dias**).
-  * **Lojas Médias:** Média total de **7,94 dias** (Nota -> Despacho: **3,34 dias**).
-  * **Lojas Pequenas:** Média total de **15,04 dias** (Nota -> Despacho: **8,41 dias** — principal ponto crítico operacional).
+  * **Lojas Grandes:** Média total de **7,93 dias** (Nota -> Despacho: **3,32 dias** | **41,82%** do tempo).
+  * **Lojas Médias:** Média total de **7,95 dias** (Nota -> Despacho: **3,34 dias** | **42,00%** do tempo).
+  * **Lojas Pequenas:** Média total de **15,16 dias** (Nota -> Despacho: **8,53 dias** | **56,28%** do tempo — principal ponto crítico operacional).
 
 
 
 ### **P2: Qual categoria concentra o faturamento?**
 
-Do faturamento total faturado pela rede (**R$ 3.586.617,02**), a distribuição por categoria padronizada ocorre da seguinte forma:
+Do faturamento total faturado pela rede (**R$ 1.793.308,51**), a distribuição por categoria padronizada ocorre da seguinte forma:
 
-1. **Racao:** R$ 2.152.405,10 (**60,01%**) — *Campeã absoluta, representando mais da metade da receita da rede*
-2. **Medicamento:** R$ 611.808,06 (**17,06%**)
-3. **Petisco:** R$ 257.180,32 (**7,17%**)
-4. **Servico:** R$ 188.002,74 (**5,24%**)
-5. **Higiene:** R$ 184.628,90 (**5,15%**)
-6. **Acessorio:** R$ 129.322,78 (**3,61%**)
-7. **Brinquedo:** R$ 63.269,12 (**1,76%**)
+1. **Racao:** R$ 1.164.812,95 (**64,95%**) — *Campeã absoluta, representando quase dois terços da receita da rede*
+2. **Medicamento:** R$ 217.293,63 (**12,12%**)
+3. **Petisco:** R$ 128.590,16 (**7,17%**)
+4. **Servico:** R$ 94.001,37 (**5,24%**)
+5. **Higiene:** R$ 92.314,45 (**5,15%**)
+6. **Acessorio:** R$ 64.661,39 (**3,61%**)
+7. **Brinquedo:** R$ 31.634,56 (**1,76%**)
 
-* **Análise de Negócio:** A categoria **Ração** é o pilar financeiro da Pata Amiga, concentrando sozinho 60% de todas as vendas da rede, seguida por **Medicamentos** (17%). Juntas, as duas categorias representam mais de 77% de todo o faturamento da empresa.
+* **Análise de Negócio:** A categoria **Ração** é o pilar financeiro da Pata Amiga, concentrando sozinha 64,95% de todas as vendas da rede, seguida por **Medicamentos** (12,12%). Juntas, as duas categorias representam mais de 77% de todo o faturamento da empresa.
 
 
 
 ### **P3: O desconto funciona igual em todo canal?**
 
 * **Distribuição do Faturamento por Canal:**
-  1. **App:** R$ 1.104.268,86 (**30,79%**) — *Principal canal de vendas da rede*
-  2. **Site:** R$ 901.138,74 (**25,13%**)
-  3. **Loja Fisica:** R$ 721.354,44 (**20,11%**)
-  4. **WhatsApp:** R$ 377.357,26 (**10,52%**)
-  5. **Telefone:** R$ 246.838,58 (**6,88%**)
-  6. **Nao Informado:** R$ 235.659,14 (**6,57%**)
+  1. **App:** R$ 552.134,43 (**30,79%**) — *Principal canal de vendas da rede*
+  2. **Site:** R$ 450.569,37 (**25,13%**)
+  3. **Loja Fisica:** R$ 360.677,22 (**20,11%**)
+  4. **WhatsApp:** R$ 188.678,63 (**10,52%**)
+  5. **Telefone:** R$ 123.419,29 (**6,88%**)
+  6. **Nao Informado:** R$ 117.829,57 (**6,57%**)
 
 * **Comportamento do Ticket Médio (COM vs. SEM Desconto):**
-  * O desconto **funciona como um forte alavancador de valor em todos os canais de venda** sem exceção.
-  * Em média, pedidos aplicados com desconto possuem um ticket médio mais de **2,5 a 3 vezes superior** aos pedidos sem desconto. Por exemplo, no **App**, o ticket médio sobe de **R$ 170,48** (sem desconto) para **R$ 488,04** (com desconto).
-  * **Conclusão de Negócio:** As promoções e cupons da Pata Amiga são altamente eficazes para aumentar o volume de compras, pois estimulam os clientes a adicionarem mais itens para atingirem as condições do desconto.
+  * **App:** R$ 488,04 (com desconto) vs. R$ 170,48 (sem desconto)
+  * **Site:** R$ 501,92 (com desconto) vs. R$ 189,48 (sem desconto)
+  * **Loja Física:** R$ 494,04 (com desconto) vs. R$ 196,78 (sem desconto)
+  * **WhatsApp:** R$ 514,33 (com desconto) vs. R$ 173,88 (sem desconto)
+  * **Telefone:** R$ 514,02 (com desconto) vs. R$ 195,46 (sem desconto)
+  * **Nao Informado:** R$ 561,59 (com desconto) vs. R$ 212,83 (sem desconto)
+* **Conclusão de Negócio:** O desconto **funciona como um forte alavancador de valor em todos os canais de venda** sem exceção. Em média, pedidos com desconto possuem um ticket médio **2,5 a 3 vezes superior** aos pedidos sem desconto.
+
+
 
 ### **P4: Qual praça de atendimento concentra o faturamento?**
 
-Aplicando o fator de público da tabela ponte (`bridge_loja_praca`) sobre o faturamento das lojas, a soma rateada atribui a receita das praças de acordo com os seguintes valores reais apurados:
+Aplicando o fator de público da tabela ponte (`bridge_loja_praca`) sobre o faturamento das lojas físicas, a soma rateada atribui a receita das praças de acordo com os seguintes valores reais apurados:
 
-1. **Grande Florianopolis:** R$ 448.899,86 — *132.000 domicílios com pet* (Líder em faturamento total)
-2. **Norte Industrial:** R$ 296.748,73 — *96.000 domicílios com pet*
-3. **Litoral Sul:** R$ 229.964,89 — *58.000 domicílios com pet*
-4. **Litoral Norte:** R$ 228.869,41 — *61.000 domicílios com pet*
-5. **Extremo Oeste:** R$ 142.795,07 — *63.000 domicílios com pet*
-6. **Serra Catarinense:** R$ 142.289,95 — *44.000 domicílios com pet*
-7. **Carbonifera:** R$ 129.556,77 — *67.000 domicílios com pet*
-8. **Meio-Oeste:** R$ 86.728,03 — *51.000 domicílios com pet*
-9. **Foz do Itajaí:** R$ 77.997,32 — *74.000 domicílios com pet*
-10. **Planalto Serrano:** R$ 47.463,58 — *29.000 domicílios com pet*
-11. **Planalto Norte:** R$ 41.977,53 — *33.000 domicílios com pet*
+1. **Vale do Itajai:** R$ 633.746,09 — *148.000 domicílios com pet* (Líder isolada em faturamento rateado)
+2. **Grande Florianopolis:** R$ 283.546,75 — *132.000 domicílios com pet*
+3. **Norte Industrial:** R$ 175.431,90 — *96.000 domicílios com pet*
+4. **Litoral Sul:** R$ 137.051,20 — *58.000 domicílios com pet*
+5. **Litoral Norte:** R$ 128.872,75 — *61.000 domicílios com pet*
+6. **Extremo Oeste:** R$ 98.359,18 — *63.000 domicílios com pet*
+7. **Carbonifera:** R$ 88.707,42 — *67.000 domicílios com pet*
+8. **Serra Catarinense:** R$ 80.477,64 — *44.000 domicílios com pet*
+9. **Meio-Oeste:** R$ 58.955,63 — *51.000 domicílios com pet*
+10. **Foz do Itajaí:** R$ 46.749,72 — *74.000 domicílios com pet*
+11. **Planalto Norte:** R$ 31.100,84 — *33.000 domicílios com pet*
+12. **Planalto Serrano:** R$ 29.323,10 — *29.000 domicílios com pet*
 
-* **Destaque da Análise:** A praça da **Grande Florianópolis** é a principal centralizadora de receita da rede, seguida pela praça do **Norte Industrial**. Praças como o **Litoral Sul** apresentam um faturamento por domicílio com pet bastante expressivo quando comparadas a praças de porte similar como o Extremo Oeste.
+* **Destaque da Análise:** A praça do **Vale do Itajaí** é a principal centralizadora de receita rateada da rede, seguida pela praça da **Grande Florianópolis**. Praças como o **Litoral Sul** apresentam excelente eficiência de faturamento proporcional por domicílio com pet.
+
 
 
 ### **P5: Onde abrir a próxima loja, e o que os dados NÃO permitem afirmar?**
 
 #### **1. Recomendação de Expansão (Ranking de Itens por 1.000 Habitantes):**
-Analisando os dados reais apurados por loja/cidade, o ranking de penetração de vendas relativas revela o seguinte cenário:
+Analisando os dados reais apurados por loja/cidade, o ranking de penetração de vendas relativas revela os principais destaques:
 
-1. **Rio dos Cedros:** **83,73** itens / 1.000 hab — *Média de entrega: 14,24 dias*
-2. **Ibirama:** **64,15** itens / 1.000 hab  — *Média de entrega: 15,39 dias*
-3. **Santo Amaro da Imperatriz:** **47,41** itens / 1.000 hab  — *Média de entrega: 15,88 dias*
-4. **Presidente Getúlio:** **44,13** itens / 1.000 hab  — *Média de entrega: 13,74 dias*
-5. **Itapoá:** **37,60** itens / 1.000 hab  — *Média de entrega: 14,85 dias*
+1. **Rio dos Cedros:** **41,87** itens / 1.000 hab (474 itens) — *Média de entrega: 14,24 dias*
+2. **Presidente Getúlio:** **34,84** itens / 1.000 hab (570 itens) — *Média de entrega: 14,16 dias*
+3. **Ibirama:** **32,07** itens / 1.000 hab (597 itens) — *Média de entrega: 15,39 dias*
+4. **Itapoá:** **25,94** itens / 1.000 hab (534 itens) — *Média de entrega: 15,39 dias*
+5. **Santo Amaro da Imperatriz:** **23,71** itens / 1.000 hab (530 itens) — *Média de entrega: 15,88 dias*
 
-* **Decisão Estratégica:** A abertura da próxima loja física/hub logístico deve focar no Alto/Médio Vale (região de **Ibirama / Rio dos Cedros**). O volume de vendas proporcional por habitante é o maior de toda a rede (mais de 60 a 80 itens por 1.000 hab), porém temos gargalos logísticos severos (prazos de entrega superiores a 14-15 dias). Instalar um ponto presencial na região resolverá o gargalo operacional e capturará a alta demanda reprimida.
+* **Decisão Estratégica:** A abertura da próxima loja física/hub logístico deve focar no Vale do Itajaí / Médio Vale (região de **Rio dos Cedros / Presidente Getúlio / Ibirama**). O volume de vendas proporcional por habitante é o maior de toda a rede (entre 32 e 41 itens por 1.000 hab), porém há gargalos logísticos severos (prazos de entrega superiores a 14-15 dias). Instalar um ponto presencial na região resolverá o gargalo operacional e capturará a alta demanda reprimida.
 
 
 
 #### **2. O que os dados NÃO permitem afirmar (Limitações do Histórico):**
-* **Sobrescrevimento do Histórico de Franquias:** A tabela de lojas (`stg_loja`) apresenta a **foto atual** do enquadramento de franquia (Bronze, Prata, Ouro, Diamante). Como o cadastro não guarda a data em que a loja mudou de faixa, **não é possível afirmar se uma venda realizada há 1 ano veio de uma loja que já possuía a faixa atual**.
+* **Sobrescrevimento do Histórico de Franquias:** A tabela de lojas (`stg_loja`) apresenta a **foto atual** do enquadramento de franquia (Bronze: R$ 84.036,06, Prata: R$ 314.812,03, Ouro: R$ 1.011.264,38, Diamante: R$ 382.209,74). Como o cadastro não guarda a data em que a loja mudou de faixa, **não é possível afirmar se uma venda realizada no passado veio de uma loja que já possuía a faixa atual**.
 * **Faixas de Franquia Sobrescritas:** Agrupar faturamento por `faixa_franquia` aplica a classificação do presente sobre pedidos do passado, mascarando a evolução histórica do programa de franquias.
 
 
@@ -237,14 +189,14 @@ Analisando os dados reais apurados por loja/cidade, o ranking de penetração de
 #### **3. Métricas do que Ficou de Fora (Limites da Carga):**
 * **3 pedidos** não possuíam identificação de loja de origem na staging (alocados em `sk_loja = -1`).
 * **1.953 pedidos** ainda não concluíram o ciclo de entrega (marcos em aberto gravados como `NULL` nos dias para não poluir as médias).
-* **Ausência de Valores Financeiros/Quantidades:** Registros com `"-"` ou em branco foram convertidos para `NULL` (preservando o cálculo correto de médias sem transformar ausência de dado em R$ 0,00 ou 0 itens).
+* **121 pedidos** sem valor líquido (`vl_liquido IS NULL`).
+* **257 pedidos** sem quantidade de itens (`qt_itens IS NULL`).
 
 
-## Arquivos complementares
+## Arquivos Complementares
 
-### **Diagrama do Modelo Demensional**
-* O Diagrama do Modelo Dimensional está no arquivo com mesmo nome em formato PNG(diagrama_modelo_dimensional.png) juntamente com os demais arquivos do projeto.
+### **Diagrama do Modelo Dimensional**
+* O Diagrama do Modelo Dimensional está disponível no arquivo `diagrama_modelo_dimensional.png` na raiz do repositório.
 
-### **Video**
-* O Video explicativo do projeto está no GoogleDrive e pode ser acessado através do link:
-   
+### **Vídeo Explicativo**
+* O vídeo explicativo do projeto (`Projeto-Modulo2.mp4`) está disponível no Google Drive e pode ser acessado através do link (https://drive.google.com/file/d/1kkiReYtmNh0TzlxMcbfHoUmLelTj1SaL/view?usp=sharing).
